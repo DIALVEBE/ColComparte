@@ -12,6 +12,7 @@ def save_faiss_index(embeddings: np.ndarray, output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dimension = embeddings.shape[1]
+    # Embeddings are normalized, so inner product behaves like cosine similarity.
     index = faiss.IndexFlatIP(dimension)
     index.add(embeddings)
     faiss.write_index(index, str(output_path))

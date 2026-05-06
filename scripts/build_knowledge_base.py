@@ -21,9 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embeddings-path", type=Path, default=Path("data/processed/embeddings.npy"))
     parser.add_argument("--index-path", type=Path, default=Path("indexes/faiss.index"))
     parser.add_argument("--model-name", default=DEFAULT_EMBEDDING_MODEL)
-    parser.add_argument("--min-words", type=int, default=180)
-    parser.add_argument("--target-words", type=int, default=320)
-    parser.add_argument("--max-words", type=int, default=500)
+    parser.add_argument("--min-words", type=int, default=35)
+    parser.add_argument("--target-words", type=int, default=140)
+    parser.add_argument("--max-words", type=int, default=240)
+    parser.add_argument("--skip-embeddings", action="store_true")
+    parser.add_argument("--download-model", action="store_true", help="Allow downloading the embedding model.")
     return parser.parse_args()
 
 
@@ -42,17 +44,30 @@ def main() -> None:
 
     records = []
     for document in documents:
+        # Build clean chunks per source, then assign global ids for FAISS alignment.
         chunks = build_chunks(document["text"], document["source"], config)
-        records.extend(chunk_to_record(chunk) for chunk in chunks)
+        for chunk in chunks:
+            record = chunk_to_record(chunk)
+            record["id"] = f"chunk-{len(records) + 1:04d}"
+            records.append(record)
 
     args.chunks_path.parent.mkdir(parents=True, exist_ok=True)
     with args.chunks_path.open("w", encoding="utf-8") as file:
         for record in records:
             file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    model = load_embedding_model(args.model_name)
-    embeddings = create_embeddings([record["text"] for record in records], model)
+    if args.skip_embeddings:
+        reviewed = sum(record["validation_status"] == "review" for record in records)
+        print(f"Documents processed: {len(documents)}")
+        print(f"Chunks created: {len(records)}")
+        print(f"Chunks to review: {reviewed}")
+        print(f"Chunks saved to: {args.chunks_path}")
+        print("Embeddings skipped.")
+        return
 
+    model = load_embedding_model(args.model_name, local_files_only=not args.download_model)
+    # The vector index position must match the order of records in chunks.jsonl.
+    embeddings = create_embeddings([record["text"] for record in records], model)
     args.embeddings_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(args.embeddings_path, embeddings)
     save_faiss_index(embeddings, args.index_path)

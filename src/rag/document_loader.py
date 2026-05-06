@@ -25,6 +25,7 @@ def load_documents(input_dir: Path) -> list[dict]:
     documents = []
 
     for path in sorted(input_dir.rglob("*")):
+        # Every returned document keeps its source path for traceability in chunks.
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
             documents.append(
                 {
@@ -43,6 +44,7 @@ def _load_docx(path: Path) -> str:
         raise ImportError("Install python-docx to read .docx files.") from error
 
     document = Document(path)
+    # Preserve paragraph boundaries because the chunker depends on them.
     paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
     return "\n\n".join(paragraphs)
 

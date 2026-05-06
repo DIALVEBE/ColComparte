@@ -1,2 +1,1 @@
-"""Utilities for the week 1 RAG pipeline."""
-
+"""Utilities for the Colombia Comparte RAG chatbot."""

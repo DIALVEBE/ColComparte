@@ -1,20 +1,34 @@
-# Colombia Comparte RAG
+# Colombia Comparte RAG Chatbot
 
-Base inicial para construir el chatbot RAG del proyecto. Esta primera parte cubre la semana 1: carga de documentos, limpieza, chunks de buena calidad, embeddings y busqueda semantica con FAISS.
+Chatbot RAG para responder preguntas sobre Colombia Comparte con contexto real de los documentos del proyecto.
 
-## Enfoque de la semana 1
+Flujo principal:
+
+```text
+Usuario -> Embedding -> FAISS/coseno -> Contexto -> Qwen2.5 -> Respuesta
+```
+
+El objetivo es responder con naturalidad sin inventar información. Si el contexto recuperado no alcanza, el chatbot usa fallback:
+
+```text
+No tengo suficiente información para responder esa pregunta con los datos disponibles.
+```
+
+## Enfoque
 
 El chunking no corta por caracteres. La estrategia es:
 
 1. Leer documentos desde `data/raw`.
 2. Limpiar espacios sin perder los saltos entre parrafos.
-3. Agrupar parrafos completos hasta llegar a un tamano objetivo.
-4. Si un parrafo es demasiado largo, dividirlo por oraciones.
-5. Agregar una oracion de solapamiento entre chunks para mantener contexto.
-6. Validar cada chunk para detectar finales raros, ideas cortadas o tamanos fuera de rango.
-7. Opcionalmente revisar chunks dudosos con un modelo pequeno de Hugging Face.
-8. Generar embeddings con un modelo pequeno de Hugging Face.
-9. Guardar `chunks.jsonl`, `embeddings.npy` y un indice FAISS.
+3. Quitar ruido editorial de documentos de trabajo, como instrucciones de diseno, CTAs internos, notas pendientes y texto de revision.
+4. Detectar fronteras semanticas como secciones, slides, rutas, programas y titulos numerados.
+5. Agrupar parrafos completos hasta llegar a un tamano objetivo, respetando esas fronteras.
+6. Si un parrafo extraido de PDF es demasiado largo, dividirlo primero por estructura interna y luego por oraciones.
+7. Agregar una oracion de solapamiento solo cuando el corte no sea cambio de tema.
+8. Fusionar chunks demasiado cortos o que terminen en una idea abierta.
+9. Validar cada chunk para detectar finales raros, ideas cortadas o tamanos fuera de rango.
+10. Generar embeddings con un modelo pequeno de Hugging Face.
+11. Guardar `chunks.jsonl`, `embeddings.npy` y un indice FAISS.
 
 Modelo recomendado para embeddings:
 
@@ -22,7 +36,11 @@ Modelo recomendado para embeddings:
 sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ```
 
-Es liviano, funciona en espanol y se descarga desde Hugging Face.
+Modelo de generación recomendado por el reto:
+
+```text
+Qwen/Qwen2.5-0.5B-Instruct
+```
 
 ## Estructura
 
@@ -32,6 +50,8 @@ data/processed/           chunks y embeddings generados
 indexes/                  indice FAISS
 scripts/build_knowledge_base.py
 scripts/search_semantic.py
+scripts/chatbot.py
+streamlit_app.py
 src/rag/                  modulos reutilizables
 ```
 
@@ -62,7 +82,19 @@ python scripts/build_knowledge_base.py
 Parametros utiles:
 
 ```bash
-python scripts/build_knowledge_base.py --min-words 180 --target-words 320 --max-words 500
+python scripts/build_knowledge_base.py --min-words 35 --target-words 140 --max-words 240
+```
+
+Para revisar solo la calidad de los chunks sin regenerar embeddings:
+
+```bash
+python scripts/build_knowledge_base.py --skip-embeddings
+```
+
+Si el modelo de embeddings no esta en cache local, permite la descarga con:
+
+```bash
+python scripts/build_knowledge_base.py --download-model
 ```
 
 Archivos generados:
@@ -79,7 +111,54 @@ indexes/faiss.index
 python scripts/search_semantic.py "Que hace Colombia Comparte?"
 ```
 
-El script muestra los chunks mas similares junto con su score. Esta prueba sirve para revisar si los fragmentos recuperados tienen sentido antes de integrar el LLM.
+El script muestra los chunks completos mas similares junto con su score. Si quieres una salida corta para inspeccion rapida, usa `--preview-chars 450`.
+
+## Probar chatbot con Qwen
+
+```bash
+python scripts/chatbot.py "Que es EDIFICA?"
+```
+
+Opciones utiles:
+
+```bash
+python scripts/chatbot.py "Que es EDIFICA?" --show-context
+python scripts/chatbot.py "Que es EDIFICA?" --no-generate
+python scripts/chatbot.py "Que es EDIFICA?" --top-k 4 --min-score 0.25
+```
+
+`--no-generate` sirve para probar solo retrieval sin cargar Qwen.
+Si Qwen o el modelo de embeddings no estan en cache local, usa `--download-models`.
+
+## Interfaz grafica
+
+La interfaz grafica esta hecha con Streamlit como una landing sencilla con chat integrado:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Abre:
+
+```text
+http://localhost:8501
+```
+
+La experiencia visual oculta la configuracion tecnica para que el usuario vea una pagina sencilla:
+
+```text
+Landing de Colombia Comparte
+Boton para abrir el chat
+Preguntas sugeridas
+Panel conversacional
+Respuestas generadas con RAG + Qwen
+```
+
+La app carga `data/processed/chunks.jsonl` e `indexes/faiss.index`. Si esos archivos no existen, ejecuta primero:
+
+```bash
+python scripts/build_knowledge_base.py
+```
 
 ## Validacion de chunks
 
@@ -97,18 +176,3 @@ Cada registro en `chunks.jsonl` incluye:
 ```
 
 Si `validation_status` queda en `review`, el chunk no se descarta: queda marcado para revision porque puede estar muy corto, muy largo o terminar con una idea aparentemente incompleta.
-
-## Apoyo opcional con LLM pequeno
-
-Para semana 1 conviene que el chunking principal use reglas claras y auditables. Aun asi, el proyecto incluye `src/rag/chunk_reviewer.py`, que permite revisar manualmente un chunk dudoso con `google/flan-t5-small` desde Hugging Face.
-
-Uso esperado:
-
-```python
-from rag.chunk_reviewer import review_chunk_with_small_llm
-
-decision = review_chunk_with_small_llm(chunk_text)
-print(decision)  # OK o REVIEW
-```
-
-No se ejecuta por defecto porque descargar y cargar un LLM hace mas lento el pipeline. La recomendacion es usarlo solo sobre chunks con `validation_status = "review"`.
